@@ -409,5 +409,21 @@ int isValidChunkOrder(ChunkInfo *cInfo, const Chunk *chunk) {
 	return TRUE;
 }
 
+void processGenericChunk(const Chunk *chunk) {
+	const size_t limitSize = 17;
+	int IsPrintLimit = chunk->dataSize > limitSize;
+	size_t PrintBytes = (IsPrintLimit ? limitSize : chunk->dataSize);
+	size_t i = 0;
+	printf("Raw data of chunk ");
+	for (; i < CHUNK_TYPE_LENGTH; i++)
+		printf("%c", chunk->chunkType[i]);
+	if (chunk->dataSize)
+		printf(":");
+	for (i = 0; i < PrintBytes; i++)
+		printf(" %.2x", chunk->Data[i]);
+	if (IsPrintLimit)
+		printf(" ...");
+	printf("\n");
+}
 
 
