@@ -409,6 +409,15 @@ int isValidChunkOrder(ChunkInfo *cInfo, const Chunk *chunk) {
 	return TRUE;
 }
 
+int processIENDChunk(const Chunk *chunk) {
+	if (chunk->dataSize)
+	{
+		fputs("IEND chunk length has to be zero.\n", stderr);
+		return FALSE;
+	}
+	return TRUE;
+}
+
 void processGenericChunk(const Chunk *chunk) {
 	const size_t limitSize = 17;
 	int IsPrintLimit = chunk->dataSize > limitSize;
