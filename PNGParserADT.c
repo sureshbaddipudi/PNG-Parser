@@ -1,70 +1,69 @@
 #include "PNGParser.h"
 #include "crc.h"
 
-static const unsigned char PngHeader[] = { 137, 80, 78, 71, 13, 10, 26, 10 };
 
 static int isChunkTypeValid( const unsigned char *ChunkType ) {
 	size_t i = 0;
+	int validCharacters = FALSE;
 	for ( ; i < CHUNK_TYPE_LENGTH; i++ ) {
 		unsigned int Character = ChunkType[i];
-		int IsIso646Letter = ( ( Character >= 65 ) && ( Character <= 90 ) ) || ( ( Character >= 97 ) && ( Character <= 122 ) );
-		if ( !IsIso646Letter )
-			return FALSE;
+		validCharacters = ((Character >= 65) && (Character <= 90)) || ((Character >= 97) && (Character <= 122));
+		if (!validCharacters)
+			break;
 	}
-	return TRUE;
+	return validCharacters;
 }
 
 static int isValidCrc( const unsigned char *ChunkType, const unsigned char *ChunkData, size_t ChunkSize, uint32_t ChunkCrc ) {
-	unsigned long Crc = update_crc( 0xffffffffL, ChunkType, CHUNK_TYPE_LENGTH );
-	Crc = update_crc( Crc, ChunkData, (int) ChunkSize );
-	Crc ^= 0xffffffffL;
-	return ( Crc == ChunkCrc );
+	unsigned long crc = update_crc( 0xffffffffL, ChunkType, CHUNK_TYPE_LENGTH );
+	crc = update_crc( crc, ChunkData, (int) ChunkSize );
+	crc ^= 0xffffffffL;
+	return (crc == ChunkCrc);
 }
 
-static int verifyAndProcessChunk( PNGData* PNG ) {
+int verifyAndProcessChunk( PNGData* PNG ) {
 	Chunk chunk;
+	int processed = FALSE;
 	const unsigned char *ChunkType = PNG->Header + 4;
-	if ( !isValidCrc( ChunkType, PNG->ChunkData, PNG->ChunkSize, GetLittleEndianInteger( PNG->ChunkCrc ) ) ) {
-		printf( "Data is corrupted\n" );
-		return FALSE;
+	if ( !isValidCrc( ChunkType, PNG->ChunkData, PNG->ChunkSize, getLastByte( PNG->ChunkCrc ) ) ) {
+		printf( "DATA CORRUPTED\n" );
+		return processed;
 	}
 	if ( !isChunkTypeValid( ChunkType ) ) {
-		printf( "Incorrect chunk type\n" );
-		return FALSE;
+		printf( "INVALID CHUNK TYPE\n" );
+		return processed;
 	}
-
 	memcpy( chunk.chunkType, ChunkType, sizeof( chunk.chunkType ) );
 	chunk.Data = PNG->ChunkData;
 	chunk.dataSize = PNG->ChunkSize;
-	return processChunk( &PNG->chunkInfo, &chunk );
+	processed = processChunk( &PNG->chunkInfo, &chunk );
+	return processed;
 }
 
-static void freeChunkData( PNGData* PNG ) {
+void freeChunkData( PNGData* PNG ) {
 	free( PNG->ChunkData );
 	PNG->ChunkData = NULL;
 }
 
-static void prepareToCopy( PNGData* PNG, unsigned char *TargetBuffer, size_t BytestoCopy ) {
-	PNG->BytesToCopy = BytestoCopy;
-	PNG->BytesCopied = 0;
-	PNG->BufferData = TargetBuffer;
-}
 
-static int processCopiedData( PNGData* PNG ) {
+int processCopiedData( PNGData* PNG ) {
 	switch ( PNG->State ) {
 	case PROCESS_PNG_HEADER:
-		if (memcmp( PNG->Header, PngHeader, sizeof( PNG->Header )))	{
-			printf( "File does not contain valid png signature\n" );
+		if (memcmp( PNG->Header, pngHeader, sizeof( PNG->Header )))	{
+			printf( "INVALID PNG SIGNATURE\n" );
 			return FALSE;
 		}
 		PNG->State = PROCESS_CHUNK_HEADER;
-		prepareToCopy( PNG, PNG->Header, sizeof( PNG->Header ) );
+
+		PNG->BytesToCopy = sizeof( PNG->Header );
+		PNG->BytesCopied = 0;
+		PNG->BufferData = PNG->Header;
 		break;
 
 	case PROCESS_CHUNK_HEADER:
-		PNG->ChunkSize = GetLittleEndianInteger( PNG->Header );
+		PNG->ChunkSize = getLastByte( PNG->Header );
 		if ( PNG->ChunkSize) {
-			/* chunk size should be maximum 2^31-1 by specification */
+
 			if ( PNG->ChunkSize > ( 1u << 31 ) - 1)	{
 				printf( "Chunk contains invalid length\n");
 				return FALSE;
@@ -75,14 +74,20 @@ static int processCopiedData( PNGData* PNG ) {
 				return FALSE;
 			}
 			PNG->State = PROCESS_CHUNK_DATA;
-			prepareToCopy( PNG, PNG->ChunkData, PNG->ChunkSize );
+
+			PNG->BytesToCopy = PNG->ChunkSize;
+			PNG->BytesCopied = 0;
+			PNG->BufferData = PNG->ChunkData;
 			break;
 		}
 		/* fall through - zero-length chunk */
 
 	case PROCESS_CHUNK_DATA:
 		PNG->State = PROCESS_CHUNK_CRC;
-		prepareToCopy( PNG, PNG->ChunkCrc, sizeof( PNG->ChunkCrc));
+
+		PNG->BytesToCopy = sizeof(PNG->ChunkCrc);
+		PNG->BytesCopied = 0;
+		PNG->BufferData = PNG->ChunkCrc;
 		break;
 
 	case PROCESS_CHUNK_CRC:
@@ -90,7 +95,10 @@ static int processCopiedData( PNGData* PNG ) {
 			return FALSE;
 		freeChunkData( PNG );
 		PNG->State = PROCESS_CHUNK_HEADER;
-		prepareToCopy( PNG, PNG->Header, sizeof( PNG->Header ) );
+
+		PNG->BytesToCopy = sizeof(PNG->Header);
+		PNG->BytesCopied = 0;
+		PNG->BufferData = PNG->Header;
 		break;
 
 	default:
@@ -106,45 +114,59 @@ int initPNGProcess( PNGData* PNG ) {
 	memset( PNG->ChunkCrc, 0, sizeof( PNG->ChunkCrc ) );
 	PNG->ChunkSize = 0;
 	PNG->ChunkData = NULL;
-	prepareToCopy( PNG, PNG->Header, sizeof( PNG->Header ) );
-	return initChunkProcess( &PNG->chunkInfo);
+	//prepareToCopy( PNG, PNG->Header, sizeof( PNG->Header ) );
+
+	PNG->BytesToCopy = sizeof(PNG->Header);
+	PNG->BytesCopied = 0;
+	PNG->BufferData = PNG->Header;
+
+	PNG->chunkInfo.IHDR = FALSE;
+	PNG->chunkInfo.IDAT = FALSE;
+	PNG->chunkInfo.PLTE = FALSE;
+	PNG->chunkInfo.ICCP = FALSE;
+	PNG->chunkInfo.SRGB = FALSE;
+	PNG->chunkInfo.CHRM = FALSE;
+	PNG->chunkInfo.GAMA = FALSE;
+	PNG->chunkInfo.SBIT = FALSE;
+	PNG->chunkInfo.BKGD = FALSE;
+	PNG->chunkInfo.HIST = FALSE;
+	PNG->chunkInfo.TRNS = FALSE;
+	PNG->chunkInfo.PHYS = FALSE;
+	PNG->chunkInfo.TIME = FALSE;
+	PNG->chunkInfo.IEND = FALSE;
+	PNG->chunkInfo.lastChunkIEND = FALSE;
+	PNG->chunkInfo.lastChunkIDAT = FALSE;
+	PNG->chunkInfo.colorType = 0;
+	return TRUE;
 }
 
 int processBuffer( PNGData* PNG, const unsigned char *Data, size_t DataLength ) {
 	size_t i = 0;
+	int processed = FALSE;
 	while (i < DataLength) {
-		/* copy as much data as possible to buffer */
 		size_t BytesAvailable = DataLength - i;
 		size_t BytesRequired = PNG->BytesToCopy - PNG->BytesCopied;
-		size_t BytesToCopy = ( ( BytesAvailable < BytesRequired ) ? BytesAvailable : BytesRequired );
+		size_t BytesToCopy = ((BytesAvailable < BytesRequired ) ? BytesAvailable : BytesRequired);
 		memcpy( PNG->BufferData + PNG->BytesCopied, Data + i, BytesToCopy );
-
-		/* update position */
 		PNG->BytesCopied += BytesToCopy;
 		i += BytesToCopy;
-
-		/* check if buffer is complete */
-		if ( PNG->BytesCopied == PNG->BytesToCopy )
-			if ( !processCopiedData( PNG ) )
-				return FALSE;
+		if ( PNG->BytesCopied == PNG->BytesToCopy)
+			processed = processCopiedData(PNG);
 	}
-	return TRUE;
+	return processed;
 }
 
 int processFinish( PNGData* PNG ) {
-	/* parser must ends exactly in state waiting for chunk */
 	if ( ( PNG->State != PROCESS_CHUNK_HEADER ) ||	PNG->BytesCopied) {
 		printf( "Mising chunk/header data\n" );
 		return FALSE;
 	}
-
-	/* notify processor about last chunk */
 	return processLastChunk( &PNG->chunkInfo);
 }
 
-void processCleanup( PNGData* PNG ) {
+/*void processCleanup( PNGData* PNG ) {
 	freeChunkData( PNG );
-}
+}*/
 
 
 int isChunkType(const unsigned char *ChunkType, const char *ChunkString) {
@@ -153,26 +175,6 @@ int isChunkType(const unsigned char *ChunkType, const char *ChunkString) {
 	return !memcmp(ChunkType, ChunkString, CHUNK_TYPE_LENGTH);
 }
 
-int initChunkProcess( ChunkInfo *cInfo ) {
-	cInfo->IHDR = FALSE;
-	cInfo->IDAT = FALSE;
-	cInfo->PLTE = FALSE;
-	cInfo->ICCP = FALSE;
-	cInfo->SRGB = FALSE;
-	cInfo->CHRM = FALSE;
-	cInfo->GAMA = FALSE;
-	cInfo->SBIT = FALSE;
-	cInfo->BKGD = FALSE;
-	cInfo->HIST = FALSE;
-	cInfo->TRNS = FALSE;
-	cInfo->PHYS = FALSE;
-	cInfo->TIME = FALSE;
-	cInfo->IEND = FALSE;
-	cInfo->lastChunkIEND = FALSE;
-	cInfo->lastChunkIDAT = FALSE;
-	cInfo->colorType = 0;
-	return TRUE;
-}
 
 int processChunk( ChunkInfo *cInfo, const Chunk *chunk ) {
 	if ( !isValidChunkOrder( cInfo, chunk )) {
@@ -238,7 +240,7 @@ int processChunk( ChunkInfo *cInfo, const Chunk *chunk ) {
 	else if (!(chunk->chunkType[0] & (1u << 5)))
 	{
 		/* unknown critical chunk */
-		printf("Unknown critical chunk encountered\n");
+		printf("UNKNOWN CRITICAL CHUNK\n");
 		return FALSE;
 	}
 	else
@@ -248,30 +250,32 @@ int processChunk( ChunkInfo *cInfo, const Chunk *chunk ) {
 }
 
 int processLastChunk( ChunkInfo *cInfo ) {
+	int processed = FALSE;
 	/* last chunk shall always be IEND */
 	if ( !cInfo->lastChunkIEND ) {
-		printf( "IEND chunk shall be the last one\n" );
-		return FALSE;
+		printf( "IEND CHUNK SHOULD BE THE LAST CHUNK\n" );
+		return processed;
 	}
 	/* PLTE chunk is required for color type 3 */
 	if ((cInfo->colorType == 3) && !cInfo->PLTE) {
-		printf("PLTE chunk shall be present for color type 3\n");
-		return FALSE;
+		printf("PLTE CHUNK SHOULD HAVE COLOR TYPE 3\n");
+		return processed;
 	}
 	/* PLTE chunk must not be present for color type 0 or 4 */
 	if (((cInfo->colorType == 0) || (cInfo->colorType == 4)) && cInfo->PLTE) {
-		printf("PLTE chunk shall not be present for color type 0 or 4\n");
-		return FALSE;
+		printf("PLTE CHUNK SHOULDN'T HAVE FOR COLOR TYPE 0 AND 4\n");
+		return processed;
 	}
-	return TRUE;
+	processed = TRUE;
+
+	return processed;
 }
 
 
 int isValidChunkOrder(ChunkInfo *cInfo, const Chunk *chunk) {
-	/* no chunk shall appear after IEND */
 	if (cInfo->lastChunkIEND)
 		return FALSE;
-	/* Idat chunks shall be consecutive */
+
 	if (cInfo->IDAT == TRUE && cInfo->lastChunkIDAT == FALSE && isChunkType(chunk->chunkType, "IDAT"))
 		return FALSE;
 	cInfo->lastChunkIDAT = FALSE;
@@ -402,7 +406,6 @@ int isValidChunkOrder(ChunkInfo *cInfo, const Chunk *chunk) {
 		}
 	}
 	else {
-		/* other chunks shall appear after IHDR */
 		if (cInfo->IHDR == FALSE)
 			return FALSE;
 	}
@@ -412,18 +415,19 @@ int isValidChunkOrder(ChunkInfo *cInfo, const Chunk *chunk) {
 int processIENDChunk(const Chunk *chunk) {
 	if (chunk->dataSize)
 	{
-		fputs("IEND chunk length has to be zero.\n", stderr);
+		fputs("IEND CHUNK LENGTH SHOULD BE 0.\n", stderr);
 		return FALSE;
 	}
 	return TRUE;
 }
 
 void processGenericChunk(const Chunk *chunk) {
-	const size_t limitSize = 17;
+	const size_t limitSize = 20;
 	int IsPrintLimit = chunk->dataSize > limitSize;
 	size_t PrintBytes = (IsPrintLimit ? limitSize : chunk->dataSize);
 	size_t i = 0;
-	printf("Raw data of chunk ");
+
+	printf("RAW DATA ");
 	for (; i < CHUNK_TYPE_LENGTH; i++)
 		printf("%c", chunk->chunkType[i]);
 	if (chunk->dataSize)
@@ -434,6 +438,7 @@ void processGenericChunk(const Chunk *chunk) {
 		printf(" ...");
 	printf("\n");
 }
+
 int processIHDRChunk(const Chunk *chunk, unsigned int *ColorTypePtr ) {
 	unsigned char bitDepth;
 	unsigned char colorType;
@@ -444,14 +449,14 @@ int processIHDRChunk(const Chunk *chunk, unsigned int *ColorTypePtr ) {
 	unsigned int height;
 	const char* imgType;
 	if (chunk->dataSize != IHDR_DATA_LENGTH) {
-		fputs("Image header is distorted.\n", stderr);
+		fputs("IMAGE HEADER DISTORTED.\n", stderr);
 		return FALSE;
 	}
 
-	width = GetLittleEndianInteger(chunk->Data);
-	height = GetLittleEndianInteger(chunk->Data + 4);
+	width = getLastByte(chunk->Data);
+	height = getLastByte(chunk->Data + 4);
 	if (width == 0 || height == 0 || width > PNG_MAX_VALUE || height > PNG_MAX_VALUE) {
-		fputs("Image resolution attributes are distorted.\n", stderr);
+		fputs("IMAGE RESOLUTION DISTORTED.\n", stderr);
 		return FALSE;
 	}
 	bitDepth = chunk->Data[8];
@@ -460,80 +465,80 @@ int processIHDRChunk(const Chunk *chunk, unsigned int *ColorTypePtr ) {
 	filterMethod = chunk->Data[11];
 	interlaceMethod = chunk->Data[12];
 
-	
+
 	if (bitDepth != 0x01 && bitDepth != 0x02
 			&& bitDepth != 0x04 && bitDepth != 0x08
 			&& bitDepth != 0x10) {
-		fputs("Bit depth not allowed.\n", stderr);
+		fputs("BIT DEPTH INVALID.\n", stderr);
 		return FALSE;
 	}
 
-	
+
 	if (colorType != 0x00 && colorType != 0x02
 			&& colorType != 0x03 && colorType != 0x04
 			&& colorType != 0x06) {
-		fputs("Color type not allowed.\n", stderr);
+		fputs("COLOR TYPE INVALID.\n", stderr);
 		return FALSE;
 	}
 
-	
+
 	if (colorType == 0x02 || colorType == 0x04
 			|| colorType == 0x06) {
 		if (bitDepth != 0x08 && bitDepth != 0x10) {
-			fputs("Bit depth not allowed for this color type.\n", stderr);
+			fputs("BIT DEPTH INVALID FOR THIS COLOR TYPE.\n", stderr);
 			return FALSE;
 		}
 	}
 
 	if (colorType == 0x03) {
 		if (bitDepth == 0x10){
-			fputs("Bit depth not allowed for this color type.\n", stderr);
+			fputs("BIT DEPTH INVALID FOR THIS COLOR TYPE.\n", stderr);
 			return FALSE;
 		}
 	}
 
-	
 
-	
+
+
 	if (compressionMethod != 0x00) {
-		fputs("Unknown compression method, only 0 allowed.\n", stderr);
+		fputs("UNKNOWN COMPRESSION METHOD, ONLY 0 ALLOWED.\n", stderr);
 		return FALSE;
 	}
 
-	
+
 	if (filterMethod != 0x00) {
-		fputs("Unknown filter method, only 0 allowed.\n", stderr);
+		fputs("UNKNOWN FILTER METHOD, ONLY 0 ALLOWED.\n", stderr);
 		return FALSE;
 	}
 
-	
+
 	if (interlaceMethod != 0x00 && interlaceMethod != 0x01) {
-		fputs("Unknown interlace method, only 0 and 1 allowed.\n", stderr);
+		fputs("UNKNOWN INTERLACE METHOD, ONLY 0 AND 1 ARE ALLOWED.\n", stderr);
 		return FALSE;
 	}
 
-	printf("Size of this image is %u x %u pixels.\n", width, height);
+	printf("SIZE OF IMAGE IS %u x %u PIXELS.\n", width, height);
 
 	switch (colorType) {
 	case 0x00:
-		imgType = "Greyscale";
+		imgType = "GREY SCALE";
 		break;
 	case 0x02:
-		imgType = "TRUEcolor";
+		imgType = "TRUE COLOR";
 		break;
 	case 0x03:
-		imgType = "Indexed-color";
+		imgType = "INDEXED COLOR";
 		break;
 	case 0x04:
-		imgType = "Greyscale with alpha";
+		imgType = "GREY SCALE WITH ALPHA";
 		break;
 	case 0x06:
-		imgType = "TRUEcolor with alpha";
+		imgType = "TRUE COLOR WITH ALPHA";
 		break;
 	default:
 		return FALSE;
 	}
-	printf("Color type is : %s\n", imgType);
+	printf("COLOR TYPE : %s\n", imgType);
 	*ColorTypePtr = colorType;
 	return TRUE;
 }
@@ -547,11 +552,11 @@ int processTIMEChunk(const Chunk *chunk) {
 	unsigned int second;
 
 	if (chunk->dataSize != TIME_DATA_LENGTH) {
-		fputs("tIME chunk length is invalid.\n", stderr);
+		fputs("tIME CHUNK LENGTH INVALID.\n", stderr);
 		return FALSE;
 	}
 
-	year = GetLittleEndianWord(chunk->Data);
+	year = getLastWord(chunk->Data);
 	month = chunk->Data[2];
 	day = chunk->Data[3];
 	hour = chunk->Data[4];
@@ -562,11 +567,11 @@ int processTIMEChunk(const Chunk *chunk) {
 			(hour > 23) ||
 			(minute > 59) ||
 			(second > 60)) {
-		fputs("Invalid time is specified.\n", stderr);
+		fputs("INVALID TIME.\n", stderr);
 		return FALSE;
 	}
 
-	printf("Time of last modification: %u.%u.%u %02u:%02u:%02u\n", day, month, year, hour, minute, second);
+	printf("LAST MODIFIED TIME: %u.%u.%u %02u:%02u:%02u\n", day, month, year, hour, minute, second);
 	return TRUE;
 }
 int processCHRMChunk(const Chunk *chunk) {
@@ -582,20 +587,20 @@ int processCHRMChunk(const Chunk *chunk) {
 	const double scale = 100000.0;
 
 	if(chunk->dataSize != CHRM_DATA_LENGTH)	{
-		fputs("cHRM chunk length is invalid.\n",stderr);
+		fputs("cHRM CHUNK LENGTH INVALID.\n",stderr);
 		return FALSE;
 	}
 
-	white_x=GetLittleEndianInteger(chunk->Data);
-	white_y=GetLittleEndianInteger(chunk->Data+4);
-	red_x=GetLittleEndianInteger(chunk->Data+8);
-	red_y=GetLittleEndianInteger(chunk->Data+12);
-	green_x=GetLittleEndianInteger(chunk->Data+16);
-	green_y=GetLittleEndianInteger(chunk->Data+20);
-	blue_x=GetLittleEndianInteger(chunk->Data+24);
-	blue_y=GetLittleEndianInteger(chunk->Data+28);
+	white_x=getLastByte(chunk->Data);
+	white_y=getLastByte(chunk->Data+4);
+	red_x=getLastByte(chunk->Data+8);
+	red_y=getLastByte(chunk->Data+12);
+	green_x=getLastByte(chunk->Data+16);
+	green_y=getLastByte(chunk->Data+20);
+	blue_x=getLastByte(chunk->Data+24);
+	blue_y=getLastByte(chunk->Data+28);
 
-	printf("Primary chromaticities:\n");
+	printf("PRIMARY CHROMATICITIES:\n");
 	printf("\tWhite x is %.2lf White y is %.2lf\n", white_x / scale, white_y / scale);
 	printf("\tRed x is %.2lf Red y is %.2lf\n", red_x / scale, red_y / scale);
 	printf("\tGreen x is %.2lf Green y is %.2lf\n", green_x / scale, green_y / scale);
@@ -603,18 +608,18 @@ int processCHRMChunk(const Chunk *chunk) {
 	return TRUE;
 }
 int processGAMAChunk(const Chunk *chunk) {
-	unsigned int gamma;
+	unsigned int gama;
 	const double scale = 100000.0;
 	if(chunk->dataSize != GAMA_DATA_LENGTH)	{
-		fputs("gAMA chunk length is invalid.\n",stderr);
+		fputs("gAMA CHUNK LENGTH INVALID.\n",stderr);
 		return FALSE;
 	}
-	gamma = GetLittleEndianInteger(chunk->Data);
-	if (gamma == 0 || gamma > PNG_MAX_VALUE)	{
-		fputs("gAMA chunk value is invalid.\n", stderr);
+	gama = getLastByte(chunk->Data);
+	if (gama == 0 || gama > PNG_MAX_VALUE)	{
+		fputs("gAMA CHUNK VALUE INVALID.\n", stderr);
 		return FALSE;
 	}
-	printf("gamma: \n\t%.5lf\n", gamma / scale);
+	printf("gAMA: \n\t%.5lf\n", gama / scale);
 	return TRUE;
 }
 
@@ -627,18 +632,18 @@ int processTEXTChunk(const Chunk *chunk) {
 
 	const unsigned char *NullBytePtr = memchr(chunk->Data, 0x00, chunk->dataSize);
 	if (!NullBytePtr) {
-		fputs("tEXt chunk is invalid.\n", stderr);
+		fputs("tEXt CHUNK INVALID.\n", stderr);
 		return FALSE;
 	}
 	keyword_length = NullBytePtr - chunk->Data;
 	text_length = chunk->dataSize - (keyword_length + null_length);
 	if (memchr(NullBytePtr + null_length, 0x00, text_length)) {
-		fputs("tEXt chunk is invalid.\n", stderr);
+		fputs("tEXt CHUNK INVALID.\n", stderr);
 		return FALSE;
 	}
 
 	if(keyword_length > TEXT_DATA_KEY_LENGTH_MAX || keyword_length < 1) {
-		fputs("tEXt chunk length is invalid.\n",stderr);
+		fputs("tEXt CHUNK LENGTH INVALID.\n",stderr);
 		return FALSE;
 	}
 
@@ -649,26 +654,27 @@ int processTEXTChunk(const Chunk *chunk) {
 	return TRUE;
 }
 int processBKGDChunk(const Chunk *chunk, unsigned int ColorType) {
-	if (((ColorType == 0 || ColorType == 4) && (chunk->dataSize != BKGD_DATA_LENGTH_TYPE_0_4)) ||
-			((ColorType == 2 || ColorType == 6) && (chunk->dataSize != BKGD_DATA_LENGTH_TYPE_2_6)) ||
-			((ColorType == 3) && (chunk->dataSize != BKGD_DATA_LENGTH_TYPE_3)))	{
-		fputs("bKGD chunk length is invalid.\n", stderr);
+
+	if (((ColorType == 0 || ColorType == 4) && (chunk->dataSize != BKGD_TYPE_0_AND_4_DATA_LENGTH)) ||
+			((ColorType == 2 || ColorType == 6) && (chunk->dataSize != BKGD_TYPE_2_AND_6_DATA_LENGTH)) ||
+			((ColorType == 3) && (chunk->dataSize != BKGD_TYPE_3_DATA_LENGTH)))	{
+		fputs("bKGD CHUNK LENGTH INVALID.\n", stderr);
 		return FALSE;
 	}
 
-	if (chunk->dataSize == BKGD_DATA_LENGTH_TYPE_0_4) {
-		unsigned int Greyscale = GetLittleEndianWord(chunk->Data);
-		printf("Background:\n\tGreyscale:%u\n",Greyscale);
+	if (chunk->dataSize == BKGD_TYPE_0_AND_4_DATA_LENGTH) {
+		unsigned int greyScale = getLastWord(chunk->Data);
+		printf("BACKGROUND:\n\tGrey Scale:%u\n",greyScale);
 	}
-	else if (chunk->dataSize == BKGD_DATA_LENGTH_TYPE_2_6) {
-		unsigned int Red = GetLittleEndianWord(chunk->Data);
-		unsigned int Green = GetLittleEndianWord(chunk->Data + 2);
-		unsigned int Blue = GetLittleEndianWord(chunk->Data + 4);
-		printf("Background:\n\tRed:%u\n\tGreen:%u\n\tBlue:%u\n",Red,Green,Blue);
+	else if (chunk->dataSize == BKGD_TYPE_2_AND_6_DATA_LENGTH) {
+		unsigned int Red = getLastWord(chunk->Data);
+		unsigned int Green = getLastWord(chunk->Data + 2);
+		unsigned int Blue = getLastWord(chunk->Data + 4);
+		printf("BACKGROUND:\n\tRed:%u\n\tGreen:%u\n\tBlue:%u\n",Red,Green,Blue);
 	}
-	else if (chunk->dataSize == BKGD_DATA_LENGTH_TYPE_3) {
+	else if (chunk->dataSize == BKGD_TYPE_3_DATA_LENGTH) {
 		unsigned int Palette_index = chunk->Data[0];
-		printf("Background:\n\tPalette index:%u\n",Palette_index);
+		printf("BACKGROUND:\n\tPalette index:%u\n",Palette_index);
 	}
 	return TRUE;
 
@@ -680,27 +686,27 @@ int processPHYSChunk(const Chunk *chunk) {
 	unsigned int unit;
 
 	if (chunk->dataSize != PHY_DATA_LENGTH)	{
-		fputs("pHYs chunk length is invalid.\n", stderr);
+		fputs("pHYs CHUNK LENGTH INVALID.\n", stderr);
 		return FALSE;
 	}
 
-	x = GetLittleEndianInteger(chunk->Data);
-	y = GetLittleEndianInteger(chunk->Data+4);
+	x = getLastByte(chunk->Data);
+	y = getLastByte(chunk->Data+4);
 	if (x > PNG_MAX_VALUE || y > PNG_MAX_VALUE) {
-		fputs("pHYs chunk data is invalid.\n", stderr);
+		fputs("pHYs CHUNK DATA INVALID.\n", stderr);
 		return FALSE;
 	}
 
 	unit = chunk->Data[8];
 	if ((unit != 1) && (unit != 0))	{
-		fputs("pHYs chunk data is invalid.\n", stderr);
+		fputs("pHYs CHUNK DATA INVALID.\n", stderr);
 		return FALSE;
 	}
 
 	if (unit == 1)
-		printf("Physic:\n\tPixel per units in x axis %u\n\tPixel per units in y axis %u\n\tUnit value is the metre\n",x,y);
+		printf("PHYSIC:\n\tPixels per units in x axis %u\n\tPixels per units in y axis %u\n\tUnit value is the metre\n",x,y);
 	else
-		printf("Physic:\n\tPixel per units in x axis %u\n\tPixel per units in y axis %u\n\tUnit value unknown\n",x,y);
+		printf("Physic:\n\tPixels per units in x axis %u\n\tPixels per units in y axis %u\n\tUnit value unknown\n",x,y);
 
 	return TRUE;
 }
@@ -708,9 +714,9 @@ int processPHYSChunk(const Chunk *chunk) {
 int processPLTEChunk(const Chunk *chunk) {
 	unsigned int index;
 	unsigned int size = chunk->dataSize / 3;
-	
+
 	if ((chunk->dataSize == 0 ) || ((chunk->dataSize % 3) != 0) || ((chunk->dataSize / 3) > PLTE_DATA_LENGTH)) {
-		fputs("PLTE chunk length is invalid.\n", stderr);
+		fputs("PLTE CHUNK LENGTH INVALID.\n", stderr);
 		return FALSE;
 	}
 	printf("PLTE data:\n");
@@ -718,7 +724,7 @@ int processPLTEChunk(const Chunk *chunk) {
 		unsigned int r = chunk->Data[0 + index * 3];
 		unsigned int g = chunk->Data[1 + index * 3];
 		unsigned int b = chunk->Data[2 + index * 3];
-		printf("Palette index %u:\tR:\t%u\tG:\t%u\tB:\t%u\n",(unsigned int)index,r,g,b);
+		printf("PALETTE INDEX %u:\tR:\t%u\tG:\t%u\tB:\t%u\n",(unsigned int)index,r,g,b);
 	}
 	return TRUE;
 }
@@ -730,33 +736,33 @@ int processICCPChunk(const Chunk *chunk) {
 	unsigned int compression_method;
 	const unsigned char *NullBytePtr = memchr(chunk->Data, 0x00, chunk->dataSize);
 	if (!NullBytePtr) {
-		fputs("iCCP chunk is invalid.\n", stderr);
+		fputs("iCCP CHUNK INVALID.\n", stderr);
 		return FALSE;
 	}
 	profile_name_length = NullBytePtr - chunk->Data;
 	if ((profile_name_length < 1) || (profile_name_length > 79)) {
-		fputs("iCCP Profile name length is invalid.\n", stderr);
+		fputs("iCCP PROFILE NAME LENGTH INVALID.\n", stderr);
 		return FALSE;
 	}
-	
+
 	for (index = 0; index < profile_name_length; index++) {
 		if (((32 <= chunk->Data[index]) && (chunk->Data[index] <= 126)) || ((161 <= chunk->Data[index]))) {}
 		else{
-			fputs("iCCP Profile text is invalid.\n", stderr);
+			fputs("iCCP PROFILE TEXT INVALID.\n", stderr);
 			return FALSE;
 		}
 	}
 
-	
+
 	if ((chunk->Data[0] == ' ') || (chunk->Data[profile_name_length - 1] == ' ')) {
-		fputs("iCCP Profile text is invalid.\n", stderr);
+		fputs("iCCP PROFILE TEXT INVALID.\n", stderr);
 		return FALSE;
 	}
 
-	
+
 	for (index = 0; index < profile_name_length - 1; index++) {
 		if ((chunk->Data[index] == ' ') && (chunk->Data[index+1] == ' ')) {
-			fputs("iCCP Profile text is invalid.\n", stderr);
+			fputs("iCCP PROFILE TEXT INVALID.\n", stderr);
 			return FALSE;
 		}
 	}
@@ -764,22 +770,22 @@ int processICCPChunk(const Chunk *chunk) {
 	compressed_data = chunk->Data + profile_name_length + 1;
 	compressed_length = chunk->dataSize - (profile_name_length + 1);
 	if (compressed_length < 1) {
-		fputs("iCCP Data length is invalid.\n", stderr);
+		fputs("iCCP DATA LENGTH INVALID.\n", stderr);
 		return FALSE;
 	}
 	compression_method = chunk->Data[profile_name_length + 1];
 	if (compression_method != 0) {
-		fputs("iCCP Data compression method is invalid.\n", stderr);
+		fputs("iCCP DATA COMPRESSION METHOD INVALID.\n", stderr);
 		return FALSE;
 	}
 
-	printf("iCCP data:\n");
-	
-	printf("\tProfile name:%s\n", chunk->Data);
-	
-	printf("\tCompression method (0=zlib):%u\n",compression_method);
-	
-	printf("\tCompressed data:\n\t\t\t");
+	printf("iCCP DATA:\n");
+
+	printf("\tPROFILE NAME:%s\n", chunk->Data);
+
+	printf("\tCOMPRESSION METHOD (0=zlib):%u\n",compression_method);
+
+	printf("\tCOMPRESSED DATA:\n\t\t\t");
 	for(index = 1; index < compressed_length; index++) {
 		printf("%.2x",compressed_data[index] );
 		if(index != 0 && index % 15 == 0)
@@ -795,7 +801,7 @@ int processSRGBChunk(const Chunk *chunk) {
 	unsigned int intent;
 
 	if (chunk->dataSize != SRGB_DATA_LENGTH) {
-		fputs("sRGB chunk length is invalid.\n", stderr);
+		fputs("sRGB CHUNK LENGTH INVALID.\n", stderr);
 		return FALSE;
 	}
 	intent = chunk->Data[0];
@@ -813,7 +819,7 @@ int processSRGBChunk(const Chunk *chunk) {
 		printf("sRGB: Absolute colorimetric\n");
 		break;
 	default:
-		fputs("sRGB value is invalid.\n", stderr);
+		fputs("sRGB VALUE INVALID.\n", stderr);
 		return FALSE;
 		break;
 	}
@@ -825,31 +831,31 @@ int processSBITChunk(const Chunk *chunk, unsigned int ColorType) {
 	unsigned int g;
 	unsigned int b;
 	unsigned int alpha;
-	if (((ColorType == 0 ) && (chunk->dataSize != SBIT_DATA_LENGTH_TYPE_0)) ||
-			((ColorType == 2 || ColorType == 3) && (chunk->dataSize != SBIT_DATA_LENGTH_TYPE_2_3)) ||
-			((ColorType == 4) && (chunk->dataSize != SBIT_DATA_LENGTH_TYPE_4)) ||
-			((ColorType == 6) && (chunk->dataSize != SBIT_DATA_LENGTH_TYPE_6)))	{
-		fputs("sBIT chunk length is invalid.\n", stderr);
+	if (((ColorType == 0 ) && (chunk->dataSize != SBIT_TYPE_0_DATA_LENGTH)) ||
+			((ColorType == 2 || ColorType == 3) && (chunk->dataSize != SBIT_TYPE_2_AND_3_DATA_LENGTH)) ||
+			((ColorType == 4) && (chunk->dataSize != SBIT_TYPE_4_DATA_LENGTH)) ||
+			((ColorType == 6) && (chunk->dataSize != SBIT_TYPE_6_DATA_LENGTH)))	{
+		fputs("sBIT CHUNK LENGTH INVALID.\n", stderr);
 		return FALSE;
 	}
 
 	switch(chunk->dataSize){
-	case SBIT_DATA_LENGTH_TYPE_0:
+	case SBIT_TYPE_0_DATA_LENGTH:
 		greyscale = chunk->Data[0];
-		printf("sBIT:\n\tGreyscale %u\n",greyscale);
+		printf("sBIT:\n\tGREY SCALE %u\n",greyscale);
 		break;
-	case SBIT_DATA_LENGTH_TYPE_2_3:
+	case SBIT_TYPE_2_AND_3_DATA_LENGTH:
 		r = chunk->Data[0];
 		g = chunk->Data[1];
 		b = chunk->Data[2];
 		printf("sBIT:\n\tR: %u\tG: %u\tB: %u\n",r,g,b);
 		break;
-	case SBIT_DATA_LENGTH_TYPE_4:
+	case SBIT_TYPE_4_DATA_LENGTH:
 		greyscale = chunk->Data[0];
 		alpha = chunk->Data[1];
-		printf("sBIT:\n\tGreyscale: %u\tAlpha: %u\n",greyscale,alpha);
+		printf("sBIT:\n\tGREY SCALE: %u\tAlpha: %u\n",greyscale,alpha);
 		break;
-	case SBIT_DATA_LENGTH_TYPE_6:
+	case SBIT_TYPE_6_DATA_LENGTH:
 		r = chunk->Data[0];
 		g = chunk->Data[1];
 		b = chunk->Data[2];
@@ -862,7 +868,7 @@ int processSBITChunk(const Chunk *chunk, unsigned int ColorType) {
 	return TRUE;
 }
 int processZTXTChunk(const Chunk *chunk) {
-	
+
 	unsigned int keyword_length;
 	unsigned int compressed_length;
 	const unsigned char *compressed_data;
@@ -870,32 +876,32 @@ int processZTXTChunk(const Chunk *chunk) {
 	unsigned int compression_method;
 	const unsigned char *NullBytePtr = memchr(chunk->Data, 0x00, chunk->dataSize);
 	if (!NullBytePtr) {
-		fputs("zTXt chunk is invalid.\n", stderr);
+		fputs("zTXt CHUNK INVALID.\n", stderr);
 		return FALSE;
 	}
 	keyword_length = NullBytePtr - chunk->Data;
 	if ((keyword_length < 1) || (keyword_length > 79)) {
-		fputs("zTXt Keyword length is invalid.\n", stderr);
+		fputs("zTXt KEY LENGTH INVALID.\n", stderr);
 		return FALSE;
 	}
 	compressed_data = chunk->Data + keyword_length + 1;
 	compressed_length = chunk->dataSize - (keyword_length + 1);
 	if (compressed_length < 1) {
-		fputs("zTXt Data length is invalid.\n", stderr);
+		fputs("zTXt DATA LENGTH INVALID.\n", stderr);
 		return FALSE;
 	}
 	compression_method = chunk->Data[keyword_length + 1];
 	if (compression_method != 0) {
-		fputs("zTXt Data compression method is invalid.\n", stderr);
+		fputs("zTXt DATA COMPRESSED METHOD INVALID.\n", stderr);
 		return FALSE;
 	}
-	printf("zTXt data:\n");
+	printf("zTXt DATA:\n");
 
-	printf("\tKeyword:%s\n", chunk->Data);
-	
-	printf("\tCompression method (0=zlib):%u\n",compression_method);
-	
-	printf("\tCompressed data:\n\t\t\t");
+	printf("\tKEYWORD:%s\n", chunk->Data);
+
+	printf("\tCOMPRESSED METHOD (0=zlib):%u\n",compression_method);
+
+	printf("\tCOMPRESSED DATA:\n\t\t\t");
 	for(index = 1; index < compressed_length; index++) {
 		printf("%.2x",compressed_data[index] );
 		if(index != 0 && index % 15 == 0)
@@ -906,3 +912,22 @@ int processZTXTChunk(const Chunk *chunk) {
 	printf("\n");
 	return TRUE;
 }
+
+uint32_t getLastByte( const unsigned char *Data ) {
+	uint32_t Result = Data[0];
+	Result <<= CHAR_BIT;
+	Result |= Data[1];
+	Result <<= CHAR_BIT;
+	Result |= Data[2];
+	Result <<= CHAR_BIT;
+	Result |= Data[3];
+	return Result;
+}
+
+uint16_t getLastWord(const unsigned char *Data) {
+	uint16_t Result = Data[0];
+	Result <<= CHAR_BIT;
+	Result |= Data[1];
+	return Result;
+}
+

@@ -1,7 +1,7 @@
 
-#include "crc.h"
+/* This file is copied from http://www.w3.org/TR/PNG/#D-CRCAppendix */
 
-/* taken from: http://www.w3.org/TR/PNG/#D-CRCAppendix */
+#include "crc.h"
 
 /* Table of CRCs of all 8-bit messages. */
 unsigned long crc_table[256];
@@ -53,3 +53,4 @@ unsigned long crc(const unsigned char *buf, int len)
 {
     return update_crc(0xffffffffL, buf, len) ^ 0xffffffffL;
 }
+
