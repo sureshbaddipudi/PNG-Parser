@@ -170,8 +170,11 @@ int processBuffer( PNGData* PNG, const unsigned char *Data, size_t DataLength ) 
 		memcpy( PNG->bufferData + PNG->bytesCopied, Data + i, BytesToCopy );
 		PNG->bytesCopied += BytesToCopy;
 		i += BytesToCopy;
-		if ( PNG->bytesCopied == PNG->bytesToCopy)
+		if ( PNG->bytesCopied == PNG->bytesToCopy) {
 			processed = processCopiedData(PNG);
+			if(!processed)
+				return processed;
+		}
 	}
 	return processed;
 }
