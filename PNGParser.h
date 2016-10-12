@@ -147,7 +147,6 @@ int processPLTEChunk(const Chunk*);
 int processICCPChunk(const Chunk*);
 int processSRGBChunk(const Chunk*);
 int processSBITChunk(const Chunk*, unsigned int);
-int processZTXTChunk(const Chunk*);
 void freeChunkData(PNGData*);
 uint32_t getLastByte( const unsigned char*);
 uint16_t getLastWord(const unsigned char*);

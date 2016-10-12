@@ -931,54 +931,7 @@ int processSBITChunk(const Chunk *chunk, unsigned int ColorType) {
 	}
 	return TRUE;
 }
-/*
- * process chunk type zTXt
- */
-int processZTXTChunk(const Chunk *chunk) {
 
-	unsigned int keyword_length;
-	unsigned int compressed_length;
-	const unsigned char *compressed_data;
-	unsigned int index;
-	unsigned int compression_method;
-	const unsigned char *NullBytePtr = memchr(chunk->Data, 0x00, chunk->dataSize);
-	if (!NullBytePtr) {
-		fputs("zTXt CHUNK INVALID.\n", stderr);
-		return FALSE;
-	}
-	keyword_length = NullBytePtr - chunk->Data;
-	if ((keyword_length < 1) || (keyword_length > 79)) {
-		fputs("zTXt KEY LENGTH INVALID.\n", stderr);
-		return FALSE;
-	}
-	compressed_data = chunk->Data + keyword_length + 1;
-	compressed_length = chunk->dataSize - (keyword_length + 1);
-	if (compressed_length < 1) {
-		fputs("zTXt DATA LENGTH INVALID.\n", stderr);
-		return FALSE;
-	}
-	compression_method = chunk->Data[keyword_length + 1];
-	if (compression_method != 0) {
-		fputs("zTXt DATA COMPRESSED METHOD INVALID.\n", stderr);
-		return FALSE;
-	}
-	printf("zTXt DATA:\n");
-
-	printf("\tKEYWORD:%s\n", chunk->Data);
-
-	printf("\tCOMPRESSED METHOD (0=zlib):%u\n",compression_method);
-
-	printf("\tCOMPRESSED DATA:\n\t\t\t");
-	for(index = 1; index < compressed_length; index++) {
-		printf("%.2x",compressed_data[index] );
-		if(index != 0 && index % 15 == 0)
-			printf("\n\t\t\t");
-		else
-			printf(" ");
-	}
-	printf("\n");
-	return TRUE;
-}
 /*
  * To get the last byte of the Integer
  */
