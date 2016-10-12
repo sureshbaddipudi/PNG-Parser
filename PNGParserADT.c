@@ -261,10 +261,6 @@ int processChunk( ChunkInfo *cInfo, const Chunk *chunk ) {
 		if (!processSBITChunk(chunk, cInfo->colorType))
 			return FALSE;
 	}
-	else if (isChunkType(chunk->chunkType, "zTXt"))	{
-		if (!processZTXTChunk(chunk))
-			return FALSE;
-	}
 	else if (!(chunk->chunkType[0] & (1u << 5)))
 	{
 		/* unknown critical chunk */
@@ -276,6 +272,7 @@ int processChunk( ChunkInfo *cInfo, const Chunk *chunk ) {
 
 	return TRUE;
 }
+
 
 /*
  * Process the Last Chunk
