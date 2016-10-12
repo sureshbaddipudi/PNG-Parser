@@ -1,8 +1,10 @@
 #include "PNGParser.h"
 #include "crc.h"
 
-
-static int isChunkTypeValid( const unsigned char *ChunkType ) {
+/*
+ * Functon to check whether the given chunk contains valid characters or not
+ */
+int isChunkTypeValid( const unsigned char *ChunkType ) {
 	size_t i = 0;
 	int validCharacters = FALSE;
 	for ( ; i < CHUNK_TYPE_LENGTH; i++ ) {
@@ -14,18 +16,26 @@ static int isChunkTypeValid( const unsigned char *ChunkType ) {
 	return validCharacters;
 }
 
-static int isValidCrc( const unsigned char *ChunkType, const unsigned char *ChunkData, size_t ChunkSize, uint32_t ChunkCrc ) {
+/*
+ * Function to check CRC of the chunk
+ */
+int isValidCrc( const unsigned char *ChunkType, const unsigned char *ChunkData, size_t ChunkSize, uint32_t ChunkCrc ) {
 	unsigned long crc = update_crc( 0xffffffffL, ChunkType, CHUNK_TYPE_LENGTH );
 	crc = update_crc( crc, ChunkData, (int) ChunkSize );
 	crc ^= 0xffffffffL;
 	return (crc == ChunkCrc);
 }
 
+/*
+ * Function to verify the type of chunk and CRC,
+ *  If chunk type is valid and CRC is valid then it processes the chunk
+ */
+
 int verifyAndProcessChunk( PNGData* PNG ) {
 	Chunk chunk;
 	int processed = FALSE;
-	const unsigned char *ChunkType = PNG->Header + 4;
-	if ( !isValidCrc( ChunkType, PNG->ChunkData, PNG->ChunkSize, getLastByte( PNG->ChunkCrc ) ) ) {
+	const unsigned char *ChunkType = PNG->chunkHeader + 4;
+	if ( !isValidCrc( ChunkType, PNG->chunkData, PNG->chunkSize, getLastByte( PNG->chunkCRC ) ) ) {
 		printf( "DATA CORRUPTED\n" );
 		return processed;
 	}
@@ -34,91 +44,98 @@ int verifyAndProcessChunk( PNGData* PNG ) {
 		return processed;
 	}
 	memcpy( chunk.chunkType, ChunkType, sizeof( chunk.chunkType ) );
-	chunk.Data = PNG->ChunkData;
-	chunk.dataSize = PNG->ChunkSize;
+	chunk.Data = PNG->chunkData;
+	chunk.dataSize = PNG->chunkSize;
 	processed = processChunk( &PNG->chunkInfo, &chunk );
 	return processed;
 }
 
+/*
+ * chunkData from the PNGData structure will be deleted/NULL
+ */
 void freeChunkData( PNGData* PNG ) {
-	free( PNG->ChunkData );
-	PNG->ChunkData = NULL;
+	free( PNG->chunkData );
+	PNG->chunkData = NULL;
 }
 
-
+/*
+ * Function to process the components of chunk layout
+ */
 int processCopiedData( PNGData* PNG ) {
 	switch ( PNG->State ) {
+	/*Verifying whether it is PNG file or not*/
 	case PROCESS_PNG_HEADER:
-		if (memcmp( PNG->Header, pngHeader, sizeof( PNG->Header )))	{
+		if (memcmp( PNG->chunkHeader, pngHeader, sizeof( PNG->chunkHeader )))	{
 			printf( "INVALID PNG SIGNATURE\n" );
 			return FALSE;
 		}
 		PNG->State = PROCESS_CHUNK_HEADER;
 
-		PNG->BytesToCopy = sizeof( PNG->Header );
-		PNG->BytesCopied = 0;
-		PNG->BufferData = PNG->Header;
+		PNG->bytesToCopy = sizeof( PNG->chunkHeader );
+		PNG->bytesCopied = 0;
+		PNG->bufferData = PNG->chunkHeader;
 		break;
 
+		/* verifying chunk header*/
 	case PROCESS_CHUNK_HEADER:
-		PNG->ChunkSize = getLastByte( PNG->Header );
-		if ( PNG->ChunkSize) {
+		PNG->chunkSize = getLastByte( PNG->chunkHeader );
+		if ( PNG->chunkSize) {
 
-			if ( PNG->ChunkSize > ( 1u << 31 ) - 1)	{
-				printf( "Chunk contains invalid length\n");
+			if ( PNG->chunkSize > ( 1u << 31 ) - 1)	{
+				printf( "INVALID CHUNK LENGTH\n");
 				return FALSE;
 			}
-			PNG->ChunkData = (unsigned char*) malloc( PNG->ChunkSize );
-			if ( !PNG->ChunkData) {
-				printf("Cannot allocate memory: %u bytes\n", (unsigned int)PNG->ChunkSize );
+			PNG->chunkData = (unsigned char*) malloc( PNG->chunkSize );
+			if ( !PNG->chunkData) {
+				printf("CAN'T ALLOCATE MEMORY: %u bytes\n", (unsigned int)PNG->chunkSize );
 				return FALSE;
 			}
 			PNG->State = PROCESS_CHUNK_DATA;
 
-			PNG->BytesToCopy = PNG->ChunkSize;
-			PNG->BytesCopied = 0;
-			PNG->BufferData = PNG->ChunkData;
+			PNG->bytesToCopy = PNG->chunkSize;
+			PNG->bytesCopied = 0;
+			PNG->bufferData = PNG->chunkData;
 			break;
 		}
-		/* fall through - zero-length chunk */
-
+		/*Prepare to process chunk data to validate CRC*/
 	case PROCESS_CHUNK_DATA:
 		PNG->State = PROCESS_CHUNK_CRC;
 
-		PNG->BytesToCopy = sizeof(PNG->ChunkCrc);
-		PNG->BytesCopied = 0;
-		PNG->BufferData = PNG->ChunkCrc;
+		PNG->bytesToCopy = sizeof(PNG->chunkCRC);
+		PNG->bytesCopied = 0;
+		PNG->bufferData = PNG->chunkCRC;
 		break;
-
+		/*Validate and Process chunk*/
 	case PROCESS_CHUNK_CRC:
 		if ( !verifyAndProcessChunk(PNG))
 			return FALSE;
 		freeChunkData( PNG );
 		PNG->State = PROCESS_CHUNK_HEADER;
 
-		PNG->BytesToCopy = sizeof(PNG->Header);
-		PNG->BytesCopied = 0;
-		PNG->BufferData = PNG->Header;
+		PNG->bytesToCopy = sizeof(PNG->chunkHeader);
+		PNG->bytesCopied = 0;
+		PNG->bufferData = PNG->chunkHeader;
 		break;
 
 	default:
-		printf( "Internal Error\n" );
+		printf( "INTERNAL ERROR\n" );
 		return FALSE;
 	}
 	return TRUE;
 }
 
+/*
+ * Initialize all the values of PNG Structure before reading the file
+ */
 int initPNGProcess( PNGData* PNG ) {
 	PNG->State = PROCESS_PNG_HEADER;
-	memset( PNG->Header, 0, sizeof( PNG->Header ) );
-	memset( PNG->ChunkCrc, 0, sizeof( PNG->ChunkCrc ) );
-	PNG->ChunkSize = 0;
-	PNG->ChunkData = NULL;
-	//prepareToCopy( PNG, PNG->Header, sizeof( PNG->Header ) );
-
-	PNG->BytesToCopy = sizeof(PNG->Header);
-	PNG->BytesCopied = 0;
-	PNG->BufferData = PNG->Header;
+	memset( PNG->chunkHeader, 0, sizeof( PNG->chunkHeader ) );
+	memset( PNG->chunkCRC, 0, sizeof( PNG->chunkCRC ) );
+	PNG->chunkSize = 0;
+	PNG->chunkData = NULL;
+	PNG->bytesToCopy = sizeof(PNG->chunkHeader);
+	PNG->bytesCopied = 0;
+	PNG->bufferData = PNG->chunkHeader;
 
 	PNG->chunkInfo.IHDR = FALSE;
 	PNG->chunkInfo.IDAT = FALSE;
@@ -140,45 +157,53 @@ int initPNGProcess( PNGData* PNG ) {
 	return TRUE;
 }
 
+/*
+ * read the Buffer into PNGData and then process
+ */
 int processBuffer( PNGData* PNG, const unsigned char *Data, size_t DataLength ) {
 	size_t i = 0;
 	int processed = FALSE;
 	while (i < DataLength) {
 		size_t BytesAvailable = DataLength - i;
-		size_t BytesRequired = PNG->BytesToCopy - PNG->BytesCopied;
+		size_t BytesRequired = PNG->bytesToCopy - PNG->bytesCopied;
 		size_t BytesToCopy = ((BytesAvailable < BytesRequired ) ? BytesAvailable : BytesRequired);
-		memcpy( PNG->BufferData + PNG->BytesCopied, Data + i, BytesToCopy );
-		PNG->BytesCopied += BytesToCopy;
+		memcpy( PNG->bufferData + PNG->bytesCopied, Data + i, BytesToCopy );
+		PNG->bytesCopied += BytesToCopy;
 		i += BytesToCopy;
-		if ( PNG->BytesCopied == PNG->BytesToCopy)
+		if ( PNG->bytesCopied == PNG->bytesToCopy)
 			processed = processCopiedData(PNG);
 	}
 	return processed;
 }
 
+/*
+ * Finish the Processing of the File
+ */
 int processFinish( PNGData* PNG ) {
-	if ( ( PNG->State != PROCESS_CHUNK_HEADER ) ||	PNG->BytesCopied) {
-		printf( "Mising chunk/header data\n" );
+	/*Process state should be waitingfor another chunk*/
+	if ( ( PNG->State != PROCESS_CHUNK_HEADER ) ||	PNG->bytesCopied) {
+		printf( "MISSING CHUNK HEADER\n" );
 		return FALSE;
 	}
+	/*Process Last chunk*/
 	return processLastChunk( &PNG->chunkInfo);
 }
 
-/*void processCleanup( PNGData* PNG ) {
-	freeChunkData( PNG );
-}*/
-
-
+/*
+ * Verifies the chunkType and its length
+ */
 int isChunkType(const unsigned char *ChunkType, const char *ChunkString) {
 	if (strlen(ChunkString) != CHUNK_TYPE_LENGTH)
 		return FALSE;
 	return !memcmp(ChunkType, ChunkString, CHUNK_TYPE_LENGTH);
 }
 
-
+/*
+ * Process the chunks
+ */
 int processChunk( ChunkInfo *cInfo, const Chunk *chunk ) {
 	if ( !isValidChunkOrder( cInfo, chunk )) {
-		printf( "Chunk order is not valid\n" );
+		printf( "INVALID CHUNK ORDER\n" );
 		return FALSE;
 	}
 
@@ -249,19 +274,22 @@ int processChunk( ChunkInfo *cInfo, const Chunk *chunk ) {
 	return TRUE;
 }
 
+/*
+ * Process the Last Chunk
+ */
 int processLastChunk( ChunkInfo *cInfo ) {
 	int processed = FALSE;
-	/* last chunk shall always be IEND */
+	/* last chunk should be IEND */
 	if ( !cInfo->lastChunkIEND ) {
 		printf( "IEND CHUNK SHOULD BE THE LAST CHUNK\n" );
 		return processed;
 	}
-	/* PLTE chunk is required for color type 3 */
+	/* colorType 3 required for PLTE chunk*/
 	if ((cInfo->colorType == 3) && !cInfo->PLTE) {
 		printf("PLTE CHUNK SHOULD HAVE COLOR TYPE 3\n");
 		return processed;
 	}
-	/* PLTE chunk must not be present for color type 0 or 4 */
+	/*ColorType 0 or 4 should not be there for PLTE chunk*/
 	if (((cInfo->colorType == 0) || (cInfo->colorType == 4)) && cInfo->PLTE) {
 		printf("PLTE CHUNK SHOULDN'T HAVE FOR COLOR TYPE 0 AND 4\n");
 		return processed;
@@ -271,7 +299,9 @@ int processLastChunk( ChunkInfo *cInfo ) {
 	return processed;
 }
 
-
+/*
+ * Verify the order of chunks
+ */
 int isValidChunkOrder(ChunkInfo *cInfo, const Chunk *chunk) {
 	if (cInfo->lastChunkIEND)
 		return FALSE;
@@ -421,6 +451,9 @@ int processIENDChunk(const Chunk *chunk) {
 	return TRUE;
 }
 
+/*
+ * Process the generic chunk type and print
+ */
 void processGenericChunk(const Chunk *chunk) {
 	const size_t limitSize = 20;
 	int IsPrintLimit = chunk->dataSize > limitSize;
@@ -439,6 +472,9 @@ void processGenericChunk(const Chunk *chunk) {
 	printf("\n");
 }
 
+/*
+ * process chunk type IHDR
+ */
 int processIHDRChunk(const Chunk *chunk, unsigned int *ColorTypePtr ) {
 	unsigned char bitDepth;
 	unsigned char colorType;
@@ -542,7 +578,9 @@ int processIHDRChunk(const Chunk *chunk, unsigned int *ColorTypePtr ) {
 	*ColorTypePtr = colorType;
 	return TRUE;
 }
-
+/*
+ * process chunk type tIME
+ */
 int processTIMEChunk(const Chunk *chunk) {
 	unsigned int year;
 	unsigned int month;
@@ -574,6 +612,9 @@ int processTIMEChunk(const Chunk *chunk) {
 	printf("LAST MODIFIED TIME: %u.%u.%u %02u:%02u:%02u\n", day, month, year, hour, minute, second);
 	return TRUE;
 }
+/*
+ * process chunk type cHRM
+ */
 int processCHRMChunk(const Chunk *chunk) {
 
 	unsigned int white_x;
@@ -607,6 +648,9 @@ int processCHRMChunk(const Chunk *chunk) {
 	printf("\tBlue x is %.2lf Blue y is %.2lf\n", blue_x / scale, blue_y / scale);
 	return TRUE;
 }
+/*
+ * process chunk type gAMA
+ */
 int processGAMAChunk(const Chunk *chunk) {
 	unsigned int gama;
 	const double scale = 100000.0;
@@ -622,7 +666,9 @@ int processGAMAChunk(const Chunk *chunk) {
 	printf("gAMA: \n\t%.5lf\n", gama / scale);
 	return TRUE;
 }
-
+/*
+ * process chunk type tEXt
+ */
 int processTEXTChunk(const Chunk *chunk) {
 
 	unsigned int keyword_length;
@@ -653,6 +699,9 @@ int processTEXTChunk(const Chunk *chunk) {
 	printf("\n");
 	return TRUE;
 }
+/*
+ * process chunk type bKGD
+ */
 int processBKGDChunk(const Chunk *chunk, unsigned int ColorType) {
 
 	if (((ColorType == 0 || ColorType == 4) && (chunk->dataSize != BKGD_TYPE_0_AND_4_DATA_LENGTH)) ||
@@ -679,7 +728,9 @@ int processBKGDChunk(const Chunk *chunk, unsigned int ColorType) {
 	return TRUE;
 
 }
-
+/*
+ * process chunk type pHYs
+ */
 int processPHYSChunk(const Chunk *chunk) {
 	unsigned int x;
 	unsigned int y;
@@ -710,7 +761,9 @@ int processPHYSChunk(const Chunk *chunk) {
 
 	return TRUE;
 }
-
+/*
+ * process chunk type PLTE
+ */
 int processPLTEChunk(const Chunk *chunk) {
 	unsigned int index;
 	unsigned int size = chunk->dataSize / 3;
@@ -728,6 +781,9 @@ int processPLTEChunk(const Chunk *chunk) {
 	}
 	return TRUE;
 }
+/*
+ * process chunk type iCCP
+ */
 int processICCPChunk(const Chunk *chunk) {
 	unsigned int profile_name_length;
 	unsigned int index;
@@ -796,7 +852,9 @@ int processICCPChunk(const Chunk *chunk) {
 	printf("\n");
 	return TRUE;
 }
-
+/*
+ * process chunk type sRGB
+ */
 int processSRGBChunk(const Chunk *chunk) {
 	unsigned int intent;
 
@@ -825,6 +883,9 @@ int processSRGBChunk(const Chunk *chunk) {
 	}
 	return TRUE;
 }
+/*
+ * process chunk type sBIT
+ */
 int processSBITChunk(const Chunk *chunk, unsigned int ColorType) {
 	unsigned int greyscale;
 	unsigned int r;
@@ -867,6 +928,9 @@ int processSBITChunk(const Chunk *chunk, unsigned int ColorType) {
 	}
 	return TRUE;
 }
+/*
+ * process chunk type zTXt
+ */
 int processZTXTChunk(const Chunk *chunk) {
 
 	unsigned int keyword_length;
@@ -912,6 +976,9 @@ int processZTXTChunk(const Chunk *chunk) {
 	printf("\n");
 	return TRUE;
 }
+/*
+ * To get the last byte of the Integer
+ */
 
 uint32_t getLastByte( const unsigned char *Data ) {
 	uint32_t Result = Data[0];
@@ -923,7 +990,9 @@ uint32_t getLastByte( const unsigned char *Data ) {
 	Result |= Data[3];
 	return Result;
 }
-
+/*
+ * To get the last 2 bytes of the Integer
+ */
 uint16_t getLastWord(const unsigned char *Data) {
 	uint16_t Result = Data[0];
 	Result <<= CHAR_BIT;

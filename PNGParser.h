@@ -51,68 +51,88 @@ static const unsigned char pngHeader[] = { 137, 80, 78, 71, 13, 10, 26, 10 };
 #define SBIT_TYPE_6_DATA_LENGTH		4
 
 
-
+/*
+ * Structure represents chunk type and its data
+ */
 struct chunk {
-	unsigned char		chunkType[CHUNK_TYPE_LENGTH];
-	size_t				dataSize;
-	const unsigned char *Data;
+	unsigned char		chunkType[CHUNK_TYPE_LENGTH]; //store chunk w.r.t type
+	size_t				dataSize; //chunk size
+	const unsigned char *Data; // chunk data
 };
 
 typedef struct chunk Chunk;
 
+/*
+ * Structure to store available types of chunks and its color type
+ */
 struct chunkInfo {
-	int IHDR;
-	int IDAT;
-	int PLTE;
-	int ICCP;
-	int SRGB;
-	int CHRM;
-	int GAMA;
-	int SBIT;
-	int BKGD;
-	int HIST;
-	int TRNS;
-	int PHYS;
+	/*Critical Chunk Types*/
+	int IHDR; //Image Header
+	int IDAT; //Image Data
+	int PLTE; // Palltte
+	int IEND; //Image Trailer
+
+	/*Ancillary Chunks*/
+	int TRNS; /* Transparency Info */
+	/*Color Space Information*/
+	int ICCP; //Embedded ICC Profile
+	int CHRM; //Primary Chromaticities and white point
+	int GAMA; //image gamma
+	int SRGB; // standard RGB color Space
+	int SBIT; //significant Bits
+	/*Textual Information*/
+	int tEXt; //Textual Data
+	int zTXt; // Compressed Textual Data
+	/*Miscellanious Information*/
+	int BKGD; //background color
+	int HIST; //image histogram
+	int PHYS; // Physical pixel dimensions
+	int SPLT; // suggested paletter
+	/*Timestamp Information*/
 	int TIME;
-	int IEND;
-	int lastChunkIEND;
-	int lastChunkIDAT;
-	unsigned int colorType;
+
+	int lastChunkIEND; // last IEND
+	int lastChunkIDAT; //last IDAT
+	unsigned int colorType; //defined color types
 };
 
 typedef struct chunkInfo ChunkInfo;
 
 
 
-int isChunkType(const unsigned char *ChunkType, const char *ChunkString);
+int isChunkType(const unsigned char*, const char*);
 int initChunkProcess( ChunkInfo*);
-
+int isChunkTypeValid( const unsigned char*);
 int processChunk( ChunkInfo*, const Chunk*);
-int processLastChunk( ChunkInfo *Context );
+int processLastChunk(ChunkInfo*);
 
+/*
+ * Structure to store the all fields of PNG File
+ */
 
 
 struct pngData {
-	int	State;
-	unsigned char	Header[8];
-	unsigned char	ChunkCrc[4];
-	size_t			ChunkSize;
-	unsigned char	*ChunkData;
-	size_t			BytesToCopy;
-	size_t			BytesCopied;
-	unsigned char	*BufferData;
-	ChunkInfo		chunkInfo;
+	int	State; //State of the processing of the file
+	unsigned char	chunkHeader[8]; //to store chunk header
+	unsigned char	chunkCRC[4]; //to store chunk CRC
+	size_t			chunkSize; //to store chunksize
+	unsigned char	*chunkData; //to store chunk data
+	size_t			bytesToCopy; // bytes to be copied to PNGData from file
+	size_t			bytesCopied; // bytes copied to PNGData from File
+	unsigned char	*bufferData; //buffer read from file
+	ChunkInfo		chunkInfo;  // everything about chunk
 };
 
 typedef struct pngData PNGData;
 
-int initPNGProcess( PNGData*);
-int verifyAndProcessChunk( PNGData* );
-int processBuffer( PNGData* , const unsigned char*, size_t);
-int processCopiedData( PNGData*);
-int processFinish( PNGData* Context );
-void processGenericChunk(const Chunk *chunk);
-int isValidChunkOrder(ChunkInfo *Context, const Chunk *chunk);
+int initPNGProcess(PNGData*);
+int verifyAndProcessChunk(PNGData*);
+int processBuffer(PNGData* , const unsigned char*, size_t);
+int processCopiedData(PNGData*);
+int processFinish(PNGData*);
+void processGenericChunk(const Chunk*);
+int isValidChunkOrder(ChunkInfo*, const Chunk*);
+int isValidCrc( const unsigned char*, const unsigned char*, size_t, uint32_t);
 
 int processIHDRChunk(const Chunk*, unsigned int*);
 int processIENDChunk(const Chunk*);
@@ -129,8 +149,8 @@ int processSRGBChunk(const Chunk*);
 int processSBITChunk(const Chunk*, unsigned int);
 int processZTXTChunk(const Chunk*);
 void freeChunkData(PNGData*);
-uint32_t getLastByte( const unsigned char *Data );
-uint16_t getLastWord(const unsigned char *Data);
+uint32_t getLastByte( const unsigned char*);
+uint16_t getLastWord(const unsigned char*);
 
 #endif /* PNGPARSER_H_ */
 

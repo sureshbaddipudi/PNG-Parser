@@ -12,12 +12,14 @@ int main( int argc, char *argv[] )
 		printf( "Too Many Arguments - Only 2 Arguments Are Allowed\n" );
 		return -1;
 	}
-
+	/*open the file in read mode*/
 	FILE *File = fopen(argv[1], "rb" );
 	if (File) {
+		/*Read the of fixed size into buffer*/
 		unsigned char *readBuffer = (unsigned char *) malloc(READ_BUFFER_SIZE);
 		if (readBuffer)	{
 			PNGData PNG;
+			/*Initialize the PNGData and process*/
 			if (initPNGProcess(&PNG)) {
 				while (!feof(File))	{
 					size_t bytesRead = fread( readBuffer, 1, READ_BUFFER_SIZE, File );
@@ -25,14 +27,16 @@ int main( int argc, char *argv[] )
 						printf( "\nCAN'T READ FILE: %s\n", argv[1]);
 						break;
 					}
+					/*Process the buffer*/
 					if (processBuffer( &PNG, readBuffer, bytesRead)) {
 						parsed = TRUE;
 					}
 				}
 				if (parsed) {
-
+					/*Process the last chunks*/
 					parsed = processFinish( &PNG );
 				}
+				/*delete the buffer*/
 				freeChunkData(&PNG);
 			}
 
@@ -48,7 +52,7 @@ int main( int argc, char *argv[] )
 	}
 
 	if(parsed)
-		printf( "File parsed successfully\n" );
+		printf( "PARSING COMPLETED\n" );
 
 	return 0;
 }
