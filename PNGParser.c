@@ -31,6 +31,10 @@ int main( int argc, char *argv[] )
 					if (processBuffer( &PNG, readBuffer, bytesRead)) {
 						parsed = TRUE;
 					}
+					else {
+						parsed = FALSE;
+						break;
+					}
 				}
 				if (parsed) {
 					/*Process the last chunks*/

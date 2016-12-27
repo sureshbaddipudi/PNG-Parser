@@ -95,8 +95,10 @@ int processCopiedData( PNGData* PNG ) {
 			PNG->bytesToCopy = PNG->chunkSize;
 			PNG->bytesCopied = 0;
 			PNG->bufferData = PNG->chunkData;
-			break;
+			break; //After processing You have to come out of the chunk header, so break is needed here
 		}
+		// No need for a break here for this case, since the program has to process the data after the header
+
 		/*Prepare to process chunk data to validate CRC*/
 	case PROCESS_CHUNK_DATA:
 		PNG->State = PROCESS_CHUNK_CRC;
